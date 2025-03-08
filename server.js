@@ -2,65 +2,78 @@ const express = require("express");
 const OpenAI = require("openai");
 const dotenv = require("dotenv");
 const cors = require("cors");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 
 app.use(express.json());
 app.use(cors());
 
 // API tạo JSON từ prompt
 app.post("/generate-json", async (req, res) => {
-    const { prompt } = req.body;
-  
-    const systemPrompt = `
-      You are an AI that generates structured JSON for character descriptions.
-      Always return JSON in this format:
-      {
-        "name": "Full Name",
-        "gender": "Male/Female/Other",
-        "traits": ["list", "of", "personality", "traits"],
-        "hobbies": ["list", "of", "hobbies"],
-        "appearance": {
-          "hair": ["length", "color"],
-          "facial": ["beard", "mustache", "clean-shaven"],
-          "eyes": ["eye color"],
-          "height": ["height in feet/inches"],
-          "weight": ["weight in lbs"],
-          "skin": ["skin tone"]
-        }
+  const { prompt } = req.body;
+
+  const systemPrompt = `
+    You are an AI that generates structured JSON for character descriptions.
+    Always return JSON in this format:
+    {
+      "name": "Full Name",
+      "gender": "Male/Female/Other",
+      "traits": ["list", "of", "personality", "traits"],
+      "hobbies": ["list", "of", "hobbies"],
+      "appearance": {
+        "hair": ["length", "color"],
+        "facial": ["beard", "mustache", "clean-shaven"],
+        "eyes": ["eye color"],
+        "height": ["height in feet/inches"],
+        "weight": ["weight in lbs"],
+        "skin": ["skin tone"]
       }
-      Ensure response is always in valid JSON format.
-    `;
-  
-    try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Describe: ${prompt}` }
-        ],
-        temperature: 0.7,
-        max_tokens: 300,
-      });
-  
-      // Lấy kết quả JSON từ phản hồi OpenAI
-      const jsonOutput = response.choices[0].message.content;
-  
-      // Kiểm tra nếu JSON hợp lệ
-      try {
-        const parsedJson = JSON.parse(jsonOutput);
-        res.json(parsedJson);
-      } catch (jsonError) {
-        res.status(500).json({ error: "Invalid JSON format", rawResponse: jsonOutput });
-      }
-    } catch (error) {
-      console.error("Error generating JSON:", error);
-      res.status(500).json({ error: "Failed to generate JSON" });
     }
-  });
+    Ensure response is always in valid JSON format.
+  `;
+
+  try {
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const response = await model.generateContent({
+          contents: [
+              { role: "user", parts: [{ text: `${systemPrompt}\nDescribe: ${prompt}` }] }
+          ]
+      });
+
+      console.log("Raw Response:", JSON.stringify(response, null, 2)); // Debug log
+
+      if (!response || !response.response || !response.response.candidates || response.response.candidates.length === 0) {
+          throw new Error("Invalid API response from Gemini");
+      }
+
+      let jsonOutput = response.response.candidates[0]?.content?.parts?.[0]?.text;
+
+      if (!jsonOutput) {
+          throw new Error("Response content is empty or invalid.");
+      }
+
+      // 🔥 Loại bỏ code block nếu có
+      jsonOutput = jsonOutput.replace(/^```json\n/, "").replace(/\n```$/, "").trim();
+
+      try {
+          const parsedJson = JSON.parse(jsonOutput);
+          res.json(parsedJson);
+      } catch (jsonError) {
+          res.status(500).json({ error: "Invalid JSON format", rawResponse: jsonOutput });
+      }
+  } catch (error) {
+      console.error("Error generating JSON:", error);
+      res.status(500).json({ error: error.message });
+  }
+});
+
+
 
 // API tạo ảnh từ JSON
 app.post("/generate-image", async (req, res) => {
@@ -91,3 +104,9 @@ app.post("/generate-image", async (req, res) => {
   
 
 app.listen(port, () => console.log(`✅ Server running on port ${port}`));
+
+
+
+
+
+
